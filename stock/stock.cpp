@@ -153,34 +153,38 @@ int main()
 
 	const int32_t test = 30 + window;
 
-	//nw
+	//
 	int32_t in_size = window * c + 2;
 	int32_t out_size = SOTCK_ACTION::UNKNOWN;
 	int32_t inner_size = in_size * out_size;
 
-	nn::network<double> nw;
-	nw.connect(1, make_shared<nn::neural<nn::fun_elu<double>>>(inner_size + 1, out_size));
-	nw.connect(0, make_shared<nn::neural<nn::fun_tanh<double>>>(in_size + 1, inner_size));
-	nw.io_reset(1);
-
 	//nwt
 	nn::network<double> nwt;
-	nwt.connect(1, make_shared<nn::neural<nn::fun_elu<double>>>(inner_size + 1, out_size));
-	nwt.connect(0, make_shared<nn::neural<nn::fun_tanh<double>>>(in_size + 1, inner_size));
+	nwt.layout(0, in_size + 1, inner_size, new nn::act_tanh<double>(), new nn::opt_adam<double>());
+	nwt.layout(1, inner_size + 1, out_size, new nn::act_elu<double>(), new nn::opt_adam<double>());
+	nwt.connect();
 	nwt.io_reset(1);
 
+	//nw
+	nn::network<double> nw;
+
 	//target
-	auto* target = nw.io_ptr(static_cast<int32_t>(nw.io.size()), nw.out_size(), 0);
+	auto* target = nw.io_ptr(static_cast<int32_t>(nwt.io_size()), nwt.out_size(), 0);
+
+	nw.layout(0, in_size + 1, inner_size, new nn::act_tanh<double>(), new nn::opt_adam<double>());
+	nw.layout(1, inner_size + 1, out_size, new nn::act_elu<double>(), new nn::opt_adam<double>());
+	nw.connect();
+	nw.io_reset(1);
 
 	//random
-	std::default_random_engine re(static_cast<int32_t>(std::time(nullptr)));
-	nw.neural_reset(re, 0.05 / inner_size, 0.1 / inner_size);
+	nw.neural_reset(0.05 / inner_size, 0.1 / inner_size);
 
 	std::uniform_int_distribution<> dist_greedy(0, r - test);
 	std::uniform_int_distribution<> dist_action(SOTCK_ACTION::BUY, SOTCK_ACTION::SELL);
 
 	//run
 	std::shared_ptr<double> work = nullptr;
+	std::default_random_engine re(utility::clock_to_time<uint32_t>());
 
 	for (int32_t e = 0; e < epoch;)
 	{
@@ -195,11 +199,11 @@ int main()
 			//nwt
 			if (0 == i % 10)
 			{
-				for (auto j = 0; j < nw.neural.size(); ++j)
-					math::matrix_assign(nwt.neural[j]->weight(), nw.neural[j]->weight(), nw.neural[j]->row(), nw.neural[j]->column());
+				for (auto j = 0; j < nw.neural_size(); ++j)
+					math::matrix_assign(nwt[j].weight(), nw[j].weight(), nw[j].row(), nw[j].column());
 			}
 
-			nw.forward();
+			nw.forward(true);
 
 			//action
 			math::vector_assign(target, nw.out(), nw.out_size());
@@ -267,15 +271,15 @@ int main()
 			nwt.in()[nwt.in_size() - 2] = tmp_money / money_div;
 			nwt.in()[nwt.in_size() - 1] = tmp_count / count_max;
 
-			nwt.forward();
+			nwt.forward(false);
 
 			target[action] = reward * gamma + rate * math::vector_max(nwt.out(), nwt.out_size());
 
 			//backward
 			for (int32_t j = 0; j < 4; ++j)
 			{
-				work = nw.backward(target, rate, work);
-				nw.forward();
+				work = nw.backward(target, work);
+				nw.forward(true);
 			}
 		}
 
@@ -287,14 +291,14 @@ int main()
 			nw.in()[nw.in_size() - 2] = money / money_div;
 			nw.in()[nw.in_size() - 1] = count / count_max;
 
-			nw.forward();
+			nw.forward(false);
 
 			if (math::vector_max(nw.out(), nw.out_size()) < -0.999 || nw.out()[0] != nw.out()[0])
 			{
 				if (--retry < 1)
 					return __LINE__;
 
-				nw.neural_reset(re, 0.05 / inner_size, 0.1 / inner_size);
+				nw.neural_reset(0.05 / inner_size, 0.1 / inner_size);
 				e = 0;
 			}
 		}
@@ -314,7 +318,7 @@ int main()
 		nw.in()[nw.in_size() - 2] = tmp_money / money_div;
 		nw.in()[nw.in_size() - 1] = tmp_count / count_max;
 
-		nw.forward();
+		nw.forward(false);
 		int32_t action = math::vector_max_index(nw.out(), nw.out_size());
 
 		nw.out_print(cout);
